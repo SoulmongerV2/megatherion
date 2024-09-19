@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, Tuple, Union, Any, List, Callable
 from enum import Enum
 from collections.abc import MutableSequence
+import random
 
 
 class Type(Enum):
@@ -174,6 +175,19 @@ class DataFrame:
             return tuple(c[index] for c in self._columns.values())
         except IndexError:
             print("Index out of bounds.")
+            
+    def __delitem__(self, index: int) -> None:
+        """
+        Delete a row at the selected index from a DataFrame.
+        :param index: Index of the row to be deleted
+        """
+        try:
+            for col in self.columns:
+                del self._columns[col][index]
+            self._size -= 1
+        except IndexError:
+            print("Entry at index " + str(index) + " does not exist.")
+        ...
 
     def __iter__(self) -> Iterator[Tuple[Union[str, float]]]:
         """
@@ -324,9 +338,6 @@ class DataFrame:
         """
         col = self._columns[col_name]
         col[row_index] = col._cast(value)
-        
-    
-    #zadani 1.6.2024
     
     def sum_by(self, category_column, data_columns: Iterable):
         
@@ -382,7 +393,7 @@ class DataFrame:
         column = self._columns[colname]
         
         ret_col = Column([], column.dtype)
-        min_current = column.__getitem__(0)
+        min_current = column[0]
         
         if skipna:
             for val in column:
@@ -411,11 +422,56 @@ class DataFrame:
             ret_col.append(min_current)
             index += 1
                     
-        return ret_col        
-        
-        
-            
+        return ret_col       
     
+    def unique(self, col_name:str) -> 'DataFrame':
+        """
+        Create a new DataFrame only containing rows with the first occurence of a unique value in a selected column.
+        :param col_name: column selected for unique value search
+        :return: new reduced dataframe  
+        """
+        
+        assert col_name in self.columns, "Dataframe does not contain " + col_name + " column."
+        
+        ret_df = self._skeleton()
+        
+        unique_values = []
+        index = list(self.columns).index(col_name)
+        
+        for row in self:
+            if row[index] not in unique_values:
+                unique_values.append(row[index])
+                ret_df.append_row(row)
+            
+        return ret_df 
+    
+    def sample(self, sample_size:int, *, norepeat=False) -> 'DataFrame':
+        """
+        Creates a new DataFrame containing randomly selected entries from the original DataFrame
+        :param sample_size: defines the number of randomly selected entries
+        :param norepeat: Optional. Selects whether the randomly sampled DataFrame can contain repeat entries. Defaults to False.
+        :return: new randomly sampled DataFrame
+        """
+        if norepeat:
+            assert sample_size < self._size, "Sample size exceeds the number of entries, use 'norepeat=False' for duplicate samples."
+            ret_df = self._skeleton()
+            repeats = []
+            while sample_size > 0:
+                randindex = random.randrange(self._size)
+                if randindex not in repeats:
+                    repeats.append(randindex)
+                    ret_df.append_row(self[randindex])
+                    sample_size -= 1
+            
+            return ret_df
+        
+        ret_df = self._skeleton()
+        
+        for _ in range(sample_size):
+            ret_df.append_row(self[random.randrange(self._size)])
+            
+        return ret_df
+       
 
     @staticmethod
     def read_csv(path: Union[str, Path]) -> 'DataFrame':
