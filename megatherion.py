@@ -170,7 +170,10 @@ class DataFrame:
         :param index: index of row
         :return: tuple of items in row
         """
-        ...
+        try:
+            return tuple(c[index] for c in self._columns.values())
+        except IndexError:
+            print("Index out of bounds.")
 
     def __iter__(self) -> Iterator[Tuple[Union[str, float]]]:
         """
@@ -202,6 +205,18 @@ class DataFrame:
             lines.append(" ".join(self._columns[cname].get_formatted_item(i, width=12)
                                      for cname in self.columns))
         return "\n".join(lines)
+    
+    def _skeleton(self) -> 'DataFrame':
+        """
+        Returns a new DataFrame which copies the input DataFrame structure (names and dtypes of columns) but excludes data
+        :return: new empty dataframe with identical column structure 
+        """
+        dtypes = []
+        
+        for key in self.columns:
+            dtypes.append(self._columns[key].dtype)
+            
+        return DataFrame({key: Column([], dtype) for key, dtype in zip(self.columns, dtypes)})    
 
     def append_column(self, col_name:str, column: Column) -> None:
         """
@@ -218,7 +233,14 @@ class DataFrame:
         Appends new row to dataframe.
         :param row: tuple of values for all columns
         """
-        ...
+        assert len(row) == len(self.columns), "Input does not match the number of columns in this DataFrame."
+        
+        li = list(row)
+        
+        for key in self.columns:
+            self._columns[key].append(li.pop(0))
+            
+        self._size += 1
 
     def filter(self, col_name:str,
                predicate: Callable[[Union[float, str]], bool]) -> 'DataFrame':
@@ -230,7 +252,17 @@ class DataFrame:
         :param predicate: testing function
         :return: new dataframe
         """
-        ...
+        assert col_name in self.columns, "DataFrame doesn't contain " + col_name + " column."
+        
+        ret_df = self._skeleton()
+        index = list(self.columns).index(col_name)
+        
+        for row in iter(self):
+            if predicate(row[index]):
+                ret_df.append_row(row)
+                
+        return ret_df
+
 
     def sort(self, col_name:str, ascending=True) -> 'DataFrame':
         """
@@ -239,7 +271,13 @@ class DataFrame:
         :param ascending: direction of sorting
         :return: new dataframe
         """
-        ...
+        
+        ret_df = self._skeleton()
+        
+        for row in sorted(iter(self), key = lambda col: col[list(self.columns).index(col_name)], reverse = not ascending):
+            ret_df.append_row(row)
+        
+        return ret_df
 
     def describe(self) -> str:
         """
@@ -258,6 +296,23 @@ class DataFrame:
             columns from `other` data table.
         """
         ...
+        
+    def extend(self, *donor_df: 'DataFrame') -> 'DataFrame':
+        """
+        Joins data from DataFrames with identical column structure into a new DataFrame
+        :return: new dataframe containing data from all input dataframes
+        """
+        for df in donor_df:
+            assert df.columns == self.columns, "Input DataFrames do not match in structures"
+            
+        ret_df = self._skeleton()
+        
+        for df in (self,) + donor_df:
+            for row in df:
+                ret_df.append_row(row)
+            
+        return ret_df
+        
 
     def setvalue(self, col_name: str, row_index: int, value: Any) -> None:
         """
@@ -269,6 +324,98 @@ class DataFrame:
         """
         col = self._columns[col_name]
         col[row_index] = col._cast(value)
+        
+    
+    #zadani 1.6.2024
+    
+    def sum_by(self, category_column, data_columns: Iterable):
+        
+        #input check
+        assert category_column in self.columns, "DataFrame doesn't contain " + category_column + " column."
+        
+        for key in data_columns:
+            assert key in data_columns, "DataFrame doesn't contain " + key + " column."
+            assert self._columns[key].dtype == Type.Float, "Data column " + key + " is not a float type."
+        
+        
+        #produce a new category column with unique values only, None excluded
+        
+        
+        squished_category_column = Column(list(set(self._columns[category_column]._data)),self._columns[category_column].dtype)
+        
+        #set up a return DataFrame
+        ret_df = DataFrame({"Cat(" + category_column + ")": squished_category_column})
+        
+        #sum up the totals of categorical values in data columns + append the values as new columns        
+        cat_index = list(self.columns).index(category_column)
+        
+        for dc in data_columns:
+            
+            dc_index = list(self.columns).index(dc)
+            dc_dict = {}
+            
+            for row in self:
+                
+                if row[cat_index] is None:
+                    continue
+                
+                if row[cat_index] in dc_dict:
+                    if row[dc_index] is not None:
+                        try:
+                            dc_dict[row[cat_index]] += row[dc_index]
+                        except TypeError:
+                            continue
+                else:
+                    dc_dict[row[cat_index]] = row[dc_index]
+            
+            ret_df.append_column(dc, Column(list(dc_dict.values()), Type.Float))
+               
+        return ret_df
+    
+    
+            
+    def cummin(self, colname, skipna=True):
+        
+        #input check
+        assert colname in self.columns, "Dataframe doesn't contain " + colname + " column."
+        
+        column = self._columns[colname]
+        
+        ret_col = Column([], column.dtype)
+        min_current = column.__getitem__(0)
+        
+        if skipna:
+            for val in column:
+                
+                if min_current is None:
+                    min_current = val
+                
+                if val is None:
+                    ret_col.append(min_current)
+                    continue
+                
+                if val < min_current:
+                    min_current = val
+                ret_col.append(min_current)
+                
+            return ret_col
+        
+        index = 0
+        for val in column:
+            if val is None:
+                for i in range(index,column.__len__()):
+                    ret_col.append(None)
+                return ret_col
+            if val < min_current:
+                min_current = val
+            ret_col.append(min_current)
+            index += 1
+                    
+        return ret_col        
+        
+        
+            
+    
 
     @staticmethod
     def read_csv(path: Union[str, Path]) -> 'DataFrame':
@@ -324,18 +471,10 @@ class CSVReader(Reader):
 
 
 if __name__ == "__main__":
-    df = DataFrame(dict(
-        a=Column([None, 3.1415], Type.Float),
-        b=Column(["a", 2], Type.String),
-        c=Column(range(2), Type.Float)
-        ))
-    df.setvalue("a", 1, 42)
+
+    df = DataFrame.read_json("./test_data.json")
+    
     print(df)
-
-    df = DataFrame.read_json("data.json")
-    print(df)
-
-for line in df:
-    print(line)
-
+    
+    
 ###
